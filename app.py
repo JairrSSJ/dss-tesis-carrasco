@@ -935,7 +935,7 @@ def pagina_inicio() -> None:
     st.write("Siga los tres pasos: **1)** cargue los datos de planta, **2)** revise que no falten datos, "
              "**3)** ejecute el DSS. Luego navegue por los módulos del menú lateral.")
 
-        st.markdown("**¿Qué formato debe tener el archivo?**")
+    st.markdown("**¿Qué formato debe tener el archivo?**")
         st.markdown(
             "- **Excel (.xlsx)** con una hoja por tabla, o **CSV (.csv)** con el mismo nombre de la hoja.\n"
             "- El nombre de cada hoja es `CPn_nombre_de_la_tabla`; por ejemplo `CP1_df_ordenes` se carga "
