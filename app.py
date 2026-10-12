@@ -936,7 +936,7 @@ def pagina_inicio() -> None:
              "**3)** ejecute el DSS. Luego navegue por los módulos del menú lateral.")
 
     st.markdown("**¿Qué formato debe tener el archivo?**")
-        st.markdown(
+    st.markdown(
             "- **Excel (.xlsx)** con una hoja por tabla, o **CSV (.csv)** con el mismo nombre de la hoja.\n"
             "- El nombre de cada hoja es `CPn_nombre_de_la_tabla`; por ejemplo `CP1_df_ordenes` se carga "
             "como la tabla `df_ordenes` del CP1.\n"
