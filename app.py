@@ -697,4 +697,475 @@ def valor_desde_df(salida, instr: dict):
     origen = f"{ruta_df} [{col_ind} = {instr['indicador']}] → {col_val}"
     if col_est in df.columns and PENDIENTE in str(fila[col_est]):
         return None, origen, f"El DSS marcó este dato como {fila[col_est]}."
-        valor = pd.to_numeric(fila[col_val], errors="coerce")
+    valor = pd.to_numeric(fila[col_val], errors="coerce")
+    if pd.isna(valor):
+        return None, origen, "El valor está vacío o no es numérico."
+    return float(valor), origen, None
+
+
+def calcular_comparacion(salida) -> list[dict]:
+    filas = []
+    for nombre, ref in LINEA_BASE.items():
+        valor = ruta = motivo = None
+        instr = KPI_RUTAS.get(nombre)
+        if instr is None:
+            motivo = "No se configuró su ubicación en KPI_RUTAS."
+        elif not isinstance(salida, dict):
+            motivo = "La salida del DSS no es un diccionario."
+        elif isinstance(instr, dict):
+            valor, ruta, motivo = valor_desde_df(salida, instr)
+        else:
+            h = get_path(salida, str(instr))
+            if h is not _FALTA and isinstance(h, (int, float, np.number)) and not isinstance(h, bool):
+                valor, ruta = float(h), str(instr)
+            else:
+                ruta, motivo = str(instr), f"No se encontró un número en «{instr}»."
+        fila = {"nombre": nombre, "unidad": ref["unidad"], "base": ref["valor"], "valor": valor,
+                "ruta": ruta, "motivo": motivo, "menor_es_mejor": ref["menor_es_mejor"]}
+        if valor is not None:
+            fila["delta"] = valor - ref["valor"]
+            fila["delta_pct"] = (valor - ref["valor"]) / ref["valor"] * 100 if ref["valor"] else None
+            fila["lectura"] = "Coincide" if abs(fila["delta"]) < 0.005 else "Difiere"
+        filas.append(fila)
+    return filas
+
+
+def df_comparacion(filas: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame([{
+        "Indicador": f["nombre"],
+        "Unidad": f["unidad"],
+        "Línea base declarada": f"{f['base']:g}",
+        "Valor medido por el DSS (AS-IS)": f"{f['valor']:g}" if f["valor"] is not None else PENDIENTE,
+        "Diferencia": f"{f['delta']:+.2f}" if f["valor"] is not None else PENDIENTE,
+        "Diferencia %": f"{f['delta_pct']:+.1f} %" if f.get("delta_pct") is not None else PENDIENTE,
+        "Lectura": f.get("lectura", PENDIENTE),
+        "Origen del valor": f["ruta"] if f["valor"] is not None else (f["motivo"] or "—"),
+    } for f in filas])
+
+
+def render_comparacion(salida) -> None:
+    st.markdown("#### Comparación AS-IS vs TO-BE entregada por el DSS")
+    render_bloque("comparacion", salida)
+
+    st.markdown("#### Verificación del AS-IS medido frente a la línea base declarada")
+    filas = calcular_comparacion(salida)
+    cols = st.columns(len(filas))
+    for col, f in zip(cols, filas):
+        with col:
+            if f["valor"] is None:
+                st.metric(f["nombre"], PENDIENTE)
+                st.caption(f"Línea base: {f['base']:g} {f['unidad']}")
+            else:
+                st.metric(f["nombre"], f"{f['valor']:g} {f['unidad']}",
+                          delta=f"{f['delta']:+.2f} vs. línea base ({f['base']:g})", delta_color="off")
+    tabla(df_comparacion(filas))
+    con_valor = {f["nombre"]: f["delta_pct"] for f in filas if f.get("delta_pct") is not None}
+    if con_valor:
+        st.markdown("**Diferencia porcentual entre el valor medido por el DSS y la línea base**")
+        st.bar_chart(pd.DataFrame({"Diferencia %": con_valor}), color=PETROLEO)
+    faltan = [f for f in filas if f["valor"] is None]
+    if faltan:
+        aviso_pendiente("El DSS no entregó valores utilizables para: "
+                        + ", ".join(f["nombre"] for f in faltan) + ". No se estiman.")
+        tabla(pd.DataFrame({"Indicador": [f["nombre"] for f in faltan],
+                            "Motivo": [f["motivo"] for f in faltan]}))
+    st.caption("Estos valores son del diagnóstico (AS-IS) y se comparan con la línea base declarada del caso.")
+
+
+def leer_decision_global(salida):
+    if not isinstance(salida, dict) or "decision_global" not in salida:
+        return None, True
+    v = salida["decision_global"]
+    if v is None:
+        return None, True
+    texto = str(v).strip()
+    if not texto:
+        return None, True
+    return texto, PENDIENTE in texto
+
+
+def render_decision_final(salida) -> None:
+    st.markdown("#### Decisión global del DSS")
+    texto, pendiente = leer_decision_global(salida)
+    if pendiente:
+        if texto:
+            aviso_pendiente(html.escape(texto).replace("\n", "<br>"))
+        else:
+            aviso_pendiente("El DSS no entregó una decisión global («decision_global»). "
+                            "No se formula ninguna recomendación desde la interfaz.")
+    else:
+        st.success(texto)
+    st.markdown("#### Detalle de la decisión (`resumen_ejecutivo.decision`)")
+    render_bloque("decision", salida)
+
+
+def render_trazabilidad_dss(reg: dict) -> None:
+    salida = reg["salida"]
+    df = salida.get("df_trazabilidad_dss", _FALTA) if isinstance(salida, dict) else _FALTA
+    if df is _FALTA or df is None:
+        aviso_pendiente("El DSS no devolvió «df_trazabilidad_dss». No se genera ni se estima ninguna tabla.")
+        return
+    if not isinstance(df, pd.DataFrame):
+        aviso_pendiente("«df_trazabilidad_dss» no es un DataFrame; no se puede mostrar como tabla.")
+        return
+    if df.empty:
+        st.info("La tabla «df_trazabilidad_dss» no tiene filas.")
+        return
+    faltan = [c for c in COLUMNAS_TRAZABILIDAD_DSS if c not in [str(x) for x in df.columns]]
+    if faltan:
+        st.warning("A la tabla le faltan las columnas esperadas: " + ", ".join(faltan) + ".")
+    tabla(df)
+    st.caption(f"{df.shape[0]} fila(s) × {df.shape[1]} columna(s).")
+    try:
+        st.download_button("Descargar tabla de trazabilidad del DSS (.csv)",
+                           df.to_csv(index=False).encode("utf-8-sig"),
+                           file_name=f"df_trazabilidad_dss_ejecucion_{reg['id']}.csv",
+                           mime="text/csv", key=f"dl_traz_dss_{reg['id']}")
+    except Exception as e:
+        st.warning(f"No se pudo generar el CSV de trazabilidad: {e}")
+
+
+def cadena_trazabilidad(reg: dict) -> pd.DataFrame:
+    filas = []
+    for etapa, bloques in ETAPAS:
+        if not bloques:
+            n_pend = len(reg["pendientes_entrada"])
+            archivos = ", ".join(a["nombre"] for a in reg["archivos"]) or "—"
+            filas.append({"Etapa": etapa,
+                          "Elementos": f"Archivos: {archivos} · huella {reg['hash_entrada'][:12]}",
+                          "Estado": "Completo" if n_pend == 0 else f"{n_pend} {PENDIENTE}"})
+            continue
+        partes, estados = [], []
+        for b in bloques:
+            hall = buscar_bloque(reg["salida"], b)
+            est = estado_bloque(hall)
+            estados.append(est)
+            ruta = ", ".join(r for r, _ in hall) if hall else "—"
+            partes.append(f"{TITULOS_BLOQUE[b]} → {ruta}")
+        filas.append({"Etapa": etapa, "Elementos": " | ".join(partes),
+                      "Estado": " / ".join(estados)})
+    return pd.DataFrame(filas)
+
+
+def paquete_trazabilidad(reg: dict) -> dict:
+    return {
+        "ejecucion": {"id": reg["id"], "marca_tiempo": reg["marca_tiempo"], "duracion_s": reg["duracion_s"]},
+        "dss": {"version": reg["version_dss"], "huella_codigo": reg["huella_codigo_dss"]},
+        "entorno": {"python": platform.python_version(), "streamlit": st.__version__,
+                    "pandas": pd.__version__, "numpy": np.__version__},
+        "archivos_cargados": reg["archivos"],
+        "hojas": reg["hojas"],
+        "cadena_trazabilidad": cadena_trazabilidad(reg).to_dict("records"),
+        "entrada": {"hash_sha256": reg["hash_entrada"], "datos": a_serializable(reg["entrada"]),
+                    "pendientes": reg["pendientes_entrada"]},
+        "salida": a_serializable(reg["salida"]),
+        "pendientes_en_salida": buscar_pendientes(reg["salida"]),
+        "error": reg["error"],
+    }
+
+
+def _nombre_hoja(base: str, usados: set) -> str:
+    limpio = re.sub(r"[\[\]\*\?/\\:]", "_", str(base))[:28] or "hoja"
+    nombre, n = limpio, 1
+    while nombre in usados:
+        n += 1
+        nombre = f"{limpio[:25]}_{n}"
+    usados.add(nombre)
+    return nombre
+
+
+def filas_resumen(reg: dict) -> list[dict]:
+    filas = []
+    for b in BLOQUES_RESUMEN:
+        hall = buscar_bloque(reg["salida"], b)
+        filas.append({"Bloque": TITULOS_BLOQUE[b], "Estado": estado_bloque(hall),
+                      "Ruta en la salida del DSS": ", ".join(r for r, _ in hall) if hall else PENDIENTE})
+    return filas
+
+
+def excel_reporte(reg: dict) -> bytes:
+    memoria = io.BytesIO()
+    usados: set[str] = set()
+    salida = reg["salida"]
+    with pd.ExcelWriter(memoria, engine="openpyxl") as xw:
+        meta = {"ejecucion": reg["id"], "fecha": reg["marca_tiempo"], "duracion_s": reg["duracion_s"],
+                "hash_entrada": reg["hash_entrada"], "version_dss": reg["version_dss"],
+                "huella_codigo_dss": reg["huella_codigo_dss"], "python": platform.python_version(),
+                "streamlit": st.__version__}
+        pd.DataFrame({"campo": list(meta), "valor": [str(v) for v in meta.values()]}).to_excel(
+            xw, sheet_name=_nombre_hoja("Metadatos", usados), index=False)
+        pd.DataFrame(filas_resumen(reg)).to_excel(xw, sheet_name=_nombre_hoja("Resumen", usados), index=False)
+        df_comparacion(calcular_comparacion(salida)).to_excel(
+            xw, sheet_name=_nombre_hoja("Comparacion", usados), index=False)
+        cadena_trazabilidad(reg).to_excel(xw, sheet_name=_nombre_hoja("Trazabilidad", usados), index=False)
+        df_traz = salida.get("df_trazabilidad_dss") if isinstance(salida, dict) else None
+        if isinstance(df_traz, pd.DataFrame):
+            df_traz.to_excel(xw, sheet_name=_nombre_hoja("Trazabilidad_DSS", usados), index=False)
+        if reg["pendientes_entrada"]:
+            pd.DataFrame(reg["pendientes_entrada"]).to_excel(
+                xw, sheet_name=_nombre_hoja("Pendientes_entrada", usados), index=False)
+        for b in list(TITULOS_BLOQUE):
+            for ruta, v in buscar_bloque(salida, b):
+                for r2, df in extraer_tablas(v, f"{b}_{ruta}"):
+                    df.to_excel(xw, sheet_name=_nombre_hoja(r2, usados), index=False)
+    return memoria.getvalue()
+
+
+def csv_reporte(reg: dict) -> bytes:
+    filas = []
+    for b in list(TITULOS_BLOQUE):
+        hall = buscar_bloque(reg["salida"], b)
+        if not hall:
+            filas.append({"bloque": TITULOS_BLOQUE[b], "ruta": "", "concepto": "", "valor": PENDIENTE})
+            continue
+        for ruta, v in hall:
+            for r2, val in aplanar(v, ruta):
+                filas.append({"bloque": TITULOS_BLOQUE[b], "ruta": ruta, "concepto": r2,
+                              "valor": formatear(val)})
+    return pd.DataFrame(filas).to_csv(index=False).encode("utf-8-sig")
+
+
+# #############################################################################
+# PARTE 3 — PÁGINAS Y NAVEGACIÓN
+# #############################################################################
+
+
+def pagina_inicio() -> None:
+    st.markdown("## Inicio — carga de datos y ejecución")
+    st.write("Siga los tres pasos: **1)** cargue los datos de planta, **2)** revise que no falten datos, "
+             "**3)** ejecute el DSS. Luego navegue por los módulos del menú lateral.")
+
+    with st.expander("¿Qué formato debe tener el archivo?"):
+        st.markdown(
+            "- **Excel (.xlsx)** con una hoja por tabla, o **CSV (.csv)** con el mismo nombre de la hoja.\n"
+            "- El nombre de cada hoja es `CPn_nombre_de_la_tabla`; por ejemplo `CP1_df_ordenes` se carga "
+            "como la tabla `df_ordenes` del CP1.\n"
+            "- Los parámetros (diccionarios de CP7 a CP11) van en una hoja con las columnas `clave`, `valor` "
+            "y `grupo`; el grupo indica el destino, por ejemplo `CP7.param_llegadas`.\n"
+            f"- Las celdas vacías o marcadas como `{PENDIENTE}` se reportan y no se completan.\n"
+            "- La lista completa de hojas está en el README.")
+
+    st.markdown("### Paso 1. Cargar datos")
+    archivos = st.file_uploader("Archivos de datos (.xlsx o .csv)", type=["xlsx", "xlsm", "csv"],
+                                accept_multiple_files=True, key="archivos_subidos")
+    if archivos:
+        hojas_total: dict[str, pd.DataFrame] = {}
+        meta = []
+        for a in archivos:
+            contenido = a.getvalue()
+            try:
+                hojas = leer_bytes(a.name, contenido)
+            except Exception as e:
+                st.error(f"No se pudo leer «{a.name}»: {e}")
+                continue
+            meta.append({"nombre": a.name, "bytes": len(contenido),
+                         "sha256": hashlib.sha256(contenido).hexdigest()})
+            stem = os.path.splitext(a.name)[0]
+            for h, df in hojas.items():
+                hojas_total[h if h not in hojas_total else f"{stem}_{h}"] = df
+        if hojas_total:
+            datos = construir_datos_entrada(hojas_total)
+            st.session_state.update(hojas=hojas_total, datos_entrada=datos, archivos=meta,
+                                    pendientes=validar_entrada(hojas_total, datos))
+    elif st.session_state["hojas"]:
+        st.info("Se conservan los datos cargados antes en esta sesión. Para reemplazarlos, suba nuevos archivos.")
+
+    hojas = st.session_state["hojas"]
+    if hojas:
+        if st.button("Quitar los datos cargados"):
+            st.session_state.update(hojas={}, datos_entrada={}, pendientes=[], archivos=[])
+            st.rerun()
+
+    st.markdown("### Paso 2. Revisar los datos")
+    if not hojas:
+        st.info("Aún no se han cargado datos.")
+    else:
+        for h, df in hojas.items():
+            tipo = "parámetros" if _es_hoja_parametros(df) else "tabla"
+            with st.expander(f"{h} — {tipo}, {df.shape[0]} fila(s) × {df.shape[1]} columna(s)"):
+                tabla(df.head(200))
+                if df.shape[0] > 200:
+                    st.caption("Se muestran las primeras 200 filas.")
+        pend = st.session_state["pendientes"]
+        if pend:
+            aviso_pendiente(f"Se detectaron {len(pend)} dato(s) faltante(s). La interfaz no los completa; "
+                            "deben medirse o confirmarse en planta.")
+            tabla(pd.DataFrame(pend))
+        else:
+            st.markdown("<div class='caja-ok'>No se detectaron datos vacíos ni marcados como "
+                        f"{PENDIENTE}.</div>", unsafe_allow_html=True)
+        if not PARAMETROS_REQUERIDOS:
+            st.caption(f"{PENDIENTE}: aún no se definió la lista de parámetros obligatorios "
+                       "(PARAMETROS_REQUERIDOS en app.py). La revisión solo detecta celdas vacías o marcadas.")
+
+    st.markdown("### Paso 3. Ejecutar el DSS")
+    if not DSS_DISPONIBLE:
+        aviso_pendiente("El motor del DSS no está conectado, por lo que no se puede ejecutar.",
+                        "Para el equipo técnico: cree dss_core.py con ejecutar_dss(datos_entrada) o pegue la "
+                        "función en la OPCIÓN B de app.py.")
+        if ERROR_IMPORTACION_DSS:
+            with st.expander("Detalle técnico de la importación"):
+                st.code(ERROR_IMPORTACION_DSS, language="text")
+    elif not hojas:
+        st.info("Cargue los datos para habilitar la ejecución.")
+    else:
+        pend = st.session_state["pendientes"]
+        permitir = True
+        if pend:
+            permitir = st.checkbox(f"Ejecutar de todas formas con {PENDIENTE}. Las celdas vacías llegarán "
+                                   "vacías al DSS, que deberá reportarlas.")
+        if st.button("Ejecutar DSS", type="primary", disabled=bool(pend) and not permitir):
+            with st.spinner("Ejecutando el DSS. La simulación puede tardar varios minutos…"):
+                reg = ejecutar_registrado(pend)
+            if reg["error"]:
+                st.error("El DSS no pudo completar la ejecución. Revise que los datos estén completos y en "
+                         "las unidades correctas.")
+                with st.expander("Detalle técnico (para el equipo de la tesis)"):
+                    st.code(reg["error"], language="text")
+            else:
+                st.success(f"Ejecución #{reg['id']} completada en {reg['duracion_s']} s. "
+                           "Abra los módulos desde el menú lateral o vaya a «Reporte final».")
+        reg = registro_activo()
+        if reg and reg["error"]:
+            st.warning(f"La ejecución #{reg['id']} terminó con error.")
+
+
+def pagina_modulo(bloque_id: str, ayuda: str) -> None:
+    reg = pagina_con_ejecucion(TITULOS_BLOQUE[bloque_id], ayuda)
+    if reg is not None:
+        render_bloque(bloque_id, reg["salida"])
+
+
+def pagina_trazabilidad() -> None:
+    st.markdown("## Trazabilidad DSS")
+    st.write("Cadena completa: dato → diagnóstico → intervención → escenario → resultado.")
+    hist = st.session_state["historial"]
+    if not hist:
+        st.info("La trazabilidad se genera al ejecutar el DSS.")
+        return
+    ids = [r["id"] for r in hist][::-1]
+    elegido = st.selectbox("Ejecución a documentar", ids,
+                           format_func=lambda i: f"#{i} — {hist[i-1]['marca_tiempo']}"
+                           + (" (con error)" if hist[i-1]["error"] else ""))
+    reg = hist[elegido - 1]
+    st.caption(f"Huella SHA-256 de la entrada: {reg['hash_entrada']}")
+    st.caption(f"Versión del DSS: {reg['version_dss']} · huella del código: {reg['huella_codigo_dss']} · "
+               f"duración: {reg['duracion_s']} s")
+    if reg["archivos"]:
+        st.markdown("**Archivos de entrada**")
+        tabla(pd.DataFrame(reg["archivos"]))
+    if reg["error"]:
+        st.error("Esta ejecución terminó con error; no hay salida que trazar.")
+        with st.expander("Detalle técnico"):
+            st.code(reg["error"], language="text")
+    else:
+        st.markdown("**Cadena de trazabilidad**")
+        tabla(cadena_trazabilidad(reg))
+        st.caption("La ubicación de cada bloque en la salida se define en MAPA_SALIDA (app.py).")
+        st.markdown("**Trazabilidad dato → resultado entregada por el DSS (`df_trazabilidad_dss`)**")
+        render_trazabilidad_dss(reg)
+    if reg["pendientes_entrada"]:
+        st.markdown(f"**{PENDIENTE} en la entrada**")
+        tabla(pd.DataFrame(reg["pendientes_entrada"]))
+    st.download_button("Descargar paquete de trazabilidad (.json)",
+                       json.dumps(paquete_trazabilidad(reg), ensure_ascii=False, indent=2),
+                       file_name=f"trazabilidad_dss_ejecucion_{reg['id']}.json", mime="application/json")
+    if len(hist) > 1:
+        st.markdown("**Ejecuciones de la sesión**")
+        tabla(pd.DataFrame([{
+            "Ejecución": r["id"], "Fecha": r["marca_tiempo"], "Huella de entrada": r["hash_entrada"][:12],
+            "Pendientes en la entrada": len(r["pendientes_entrada"]), "Duración (s)": r["duracion_s"],
+            "Estado": "Error" if r["error"] else "Completada"} for r in hist]))
+
+
+def pagina_reporte() -> None:
+    reg = pagina_con_ejecucion(
+        "Reporte final — resumen ejecutivo",
+        "Siete bloques con lo que entregó el DSS. Lo que no se entregó figura como "
+        f"{PENDIENTE}; no se estima ni se completa.")
+    if reg is None:
+        return
+    salida = reg["salida"]
+
+    st.markdown("### Estado de los bloques")
+    tabla(pd.DataFrame(filas_resumen(reg)))
+
+    for i, b in enumerate(BLOQUES_RESUMEN, 1):
+        st.markdown(f"### {i}. {TITULOS_BLOQUE[b]}")
+        if b == "comparacion":
+            render_comparacion(salida)
+        elif b == "decision":
+            render_decision_final(salida)
+        else:
+            render_bloque(b, salida)
+
+    st.markdown("### Exportar el reporte")
+    c1, c2 = st.columns(2)
+    try:
+        c1.download_button("Descargar reporte en Excel (.xlsx)", excel_reporte(reg),
+                           file_name=f"reporte_dss_ejecucion_{reg['id']}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    except Exception as e:
+        c1.warning(f"No se pudo generar el Excel: {e}")
+    try:
+        c2.download_button("Descargar reporte en CSV (.csv)", csv_reporte(reg),
+                           file_name=f"reporte_dss_ejecucion_{reg['id']}.csv", mime="text/csv")
+    except Exception as e:
+        c2.warning(f"No se pudo generar el CSV: {e}")
+    st.caption("El Excel incluye resumen, comparación, trazabilidad, pendientes y las tablas de cada bloque. "
+               "El CSV contiene todos los valores de la salida en formato plano.")
+
+
+with st.sidebar:
+    st.markdown("### Módulos")
+    modulo = st.radio("Seleccione un módulo", MODULOS, key="modulo", label_visibility="collapsed")
+    st.divider()
+    st.markdown("**Estado**")
+    st.caption(("Motor DSS conectado" if DSS_DISPONIBLE else f"Motor DSS: {PENDIENTE}"))
+    st.caption(f"Hojas/tablas cargadas: {len(st.session_state['hojas'])}")
+    st.caption(f"Datos pendientes en la entrada: {len(st.session_state['pendientes'])}")
+    _r = registro_activo()
+    st.caption("Última ejecución: " + (f"#{_r['id']} ({'con error' if _r['error'] else 'completada'})"
+                                       if _r else "ninguna"))
+    if DSS_DISPONIBLE:
+        try:
+            st.caption(f"Firma: `ejecutar_dss{inspect.signature(ejecutar_dss)}`")
+        except (TypeError, ValueError):
+            pass
+    st.divider()
+    if st.button("Reiniciar la sesión"):
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
+        st.rerun()
+
+st.title(TITULO)
+st.markdown(f"<div class='subtitulo'>{SUBTITULO}</div>", unsafe_allow_html=True)
+
+AYUDAS = {
+    "c1": "Mapa de la cadena de valor con datos de planta: dónde se pierde tiempo entre la recepción "
+          "del pedido y la entrega.",
+    "c2": "Nivel de preparación tecnológica de la planta para incorporar herramientas digitales.",
+    "c3": "Herramientas Lean 4.0 ordenadas según el diagnóstico y la madurez de la planta.",
+    "escenarios": "Escenarios de mejora (TO-BE) construidos a partir de la priorización.",
+    "des": "Estado de ejecución de cada módulo del DSS (control de flujo), con su mensaje.",
+    "cp11": "Evaluación de los resultados de la simulación (checkpoint 11 del artefacto).",
+}
+
+if modulo == MODULOS[0]:
+    pagina_inicio()
+elif modulo == MODULOS[1]:
+    pagina_modulo("c1", AYUDAS["c1"])
+elif modulo == MODULOS[2]:
+    pagina_modulo("c2", AYUDAS["c2"])
+elif modulo == MODULOS[3]:
+    pagina_modulo("c3", AYUDAS["c3"])
+elif modulo == MODULOS[4]:
+    pagina_modulo("escenarios", AYUDAS["escenarios"])
+elif modulo == MODULOS[5]:
+    pagina_modulo("des", AYUDAS["des"])
+elif modulo == MODULOS[6]:
+    pagina_modulo("cp11", AYUDAS["cp11"])
+elif modulo == MODULOS[7]:
+    pagina_trazabilidad()
+else:
+    pagina_reporte()
