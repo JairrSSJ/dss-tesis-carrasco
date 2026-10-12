@@ -165,7 +165,9 @@ h1 {{ font-weight: 700; font-size: 1.85rem !important; margin-bottom: 0.2rem; }}
 div[data-testid="stMetric"] {{ background: #F2F5F4; border-left: 5px solid {SALVIA};
     padding: 0.7rem 0.9rem; border-radius: 4px; }}
 div[data-testid="stMetricLabel"] p {{ color: {PETROLEO}; font-weight: 500; }}
-button[kind="primary"] {{ background-color: {PETROLEO}; border-color: {PETROLEO}; }}
+button[kind="primary"] {{ background-color: {PETROLEO} !important; border-color: {PETROLEO} !important; }}
+section[data-testid="stFileUploader"] button {{ background-color: transparent !important; border: 1px solid #ccc !important; color: #333 !important; }}
+section[data-testid="stFileUploader"] button span {{ color: #333 !important; }}
 section[data-testid="stSidebar"] {{ background: #F2F5F4; }}
 .caja-pendiente {{ border-left: 5px solid {NARANJA}; background: #FBF1E6;
     padding: 0.7rem 1rem; border-radius: 4px; margin: 0.4rem 0 0.8rem 0; }}
