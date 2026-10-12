@@ -106,6 +106,7 @@ datos_entrada = {
     "CP10": {"df_replicas": ..., "df_resumen_escenarios": ..., "parametros_simulacion": {...}},
     "CP11": {"df_evaluacion_cp11": ..., "METAS_TOBE": {...}},
 }
+```
 
 ### `decision_global`
 
