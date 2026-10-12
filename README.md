@@ -24,6 +24,37 @@ validado por Simulación de Eventos Discretos (DES) y evaluado en el CP11.
 └── .streamlit/
     └── config.toml         # Tema visual
 
+`dss_core.py` contiene el código de los checkpoints CP1 a CP12 consolidado en un solo módulo, con la
+función maestra `ejecutar_dss(datos_entrada)`. Si el motor usa alguna librería adicional a las de
+`requirements.txt`, debe agregarse allí (`PENDIENTE_DATOS`: confirmar con el entorno de Colab).
+
+## Módulos de la interfaz
+
+1. Inicio (carga de datos)
+2. C1 VSM Digital
+3. C2 Madurez Digital
+4. C3 Priorización Lean 4.0
+5. Escenarios TO-BE
+6. DES (simulación): muestra el control de flujo, es decir, el estado de cada módulo del DSS
+7. Evaluación CP11
+8. Trazabilidad DSS
+9. Reporte final
+
+## Despliegue en Streamlit Cloud
+
+1. Cree un repositorio en GitHub con los archivos de la sección «Estructura del repositorio».
+2. Entre a Streamlit Community Cloud e inicie sesión con GitHub.
+3. Pulse **New app** y seleccione el repositorio, la rama y el archivo principal `app.py`.
+4. Pulse **Deploy**. Streamlit instalará las librerías de `requirements.txt`.
+5. Registre las direcciones obtenidas:
+   - URL del repositorio: `https://github.com/JairrSSJ/dss-tesis-carrasco`
+   - URL de la app desplegada: `https://dss-tesis-carrasco-dtkakh58fjpufmiyuwh7o2.streamlit.app`
+
+## Ejecución local
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
 ## Formato de los archivos de entrada
 
 - **Excel (.xlsx):** una hoja por tabla. **CSV (.csv):** un archivo por tabla, con el mismo nombre que
