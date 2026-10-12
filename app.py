@@ -697,4 +697,4 @@ def valor_desde_df(salida, instr: dict):
     origen = f"{ruta_df} [{col_ind} = {instr['indicador']}] → {col_val}"
     if col_est in df.columns and PENDIENTE in str(fila[col_est]):
         return None, origen, f"El DSS marcó este dato como {fila[col_est]}."
-    valor = pd.to_numeric(fila[col_val], errors="co
+        valor = pd.to_numeric(fila[col_val], errors="coerce")
