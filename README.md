@@ -55,6 +55,8 @@ función maestra `ejecutar_dss(datos_entrada)`. Si el motor usa alguna librería
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
+```
+
 ## Formato de los archivos de entrada
 
 - **Excel (.xlsx):** una hoja por tabla. **CSV (.csv):** un archivo por tabla, con el mismo nombre que
